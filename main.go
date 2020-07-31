@@ -94,7 +94,7 @@ func aircraftIdent(data string) AircraftIdent {
 }
 
 func airplaneLookup(icao string) string {
-	in, err := os.Open("aircraft_db.csv")
+	in, err := os.Open("data/aircraft_db.csv")
 	if err != nil {
 		log.Fatal("Whoops")
 	}
@@ -240,7 +240,7 @@ func typeCodeLookup(tc int64) string {
 func loadTestData() []string {
 	var data []string
 
-	in, err := os.Open("sample_data_adsb.csv")
+	in, err := os.Open("data/sample_data_adsb.csv")
 	if err != nil {
 		log.Fatal("Whoops")
 	}
