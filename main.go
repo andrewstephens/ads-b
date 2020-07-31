@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
@@ -29,8 +29,10 @@ func main() {
 
 	testData := loadTestData()
 
+	var aircraftPositionBuffer []AirbornePosition
+
+	DataLoop:
 	for _, d := range testData {
-		time.Sleep(time.Second * 1)
 		binString := hs2bs(d)
 
 		bsr := []rune(binString)
@@ -45,8 +47,30 @@ func main() {
 			log.Fatal("Not a correct aircraft ID downlink format.")
 		}
 
+		// If Aircraft position type code(s)
 		if bin2int(tc) >= 9 && bin2int(tc) <= 18 {
-			parseAirbornePosition(bsr)
+			pos := parseAirbornePosition(bsr)
+			// TODO: NEED TO ADD LOGIC FOR ORDER IN WHICH DATA COMES IN (FLAG IS EVEN OR ODD?)
+			if len(aircraftPositionBuffer) == 0 {
+				aircraftPositionBuffer = append(aircraftPositionBuffer, pos)
+			} else if len(aircraftPositionBuffer) == 1 {
+				ac := aircraftPositionBuffer[0]
+				if ac.tc == tc && ac.icao == icao && ac.df == df && pos.cprFlg == 1 {
+					aircraftPositionBuffer = append(aircraftPositionBuffer, pos)
+
+					// Globally Unambiguous position
+					latitude, err := calculateLatitude(pos, ac)
+					if err != nil {
+						break DataLoop
+					}
+					//longitude := calculateLongitude(pos, ac)
+
+					fmt.Println("Latitude: ", latitude)
+					fmt.Println("Woo!")
+				}
+			} else if len(aircraftPositionBuffer) == 2 {
+				aircraftPositionBuffer = []AirbornePosition{}
+			}
 		}
 
 		icaoLookup := airplaneLookup(bin2hex(icao))
@@ -62,8 +86,86 @@ func main() {
 		fmt.Println("TC: ", tcInt, typeCodeLookup(tcInt))
 		fmt.Println("PI: ", pi)
 	}
+}
 
+func calculateLatitude(ac, pos AirbornePosition) (float64, error) {
+	cprLatEven := float64(bin2int(ac.latCPR)) / float64(131072)
+	cprLatOdd := float64(bin2int(pos.latCPR)) / float64(131072)
 
+	// Calculate Latitude Index "j"
+	j := math.Floor((58 * cprLatEven) - (60 * cprLatOdd) + float64(1) / float64(2))
+
+	// Calculate Latitude
+	dLatEven := float64(360) / float64(4 * NZ)
+	dLatOdd := float64(360) / float64(4 * NZ - 1)
+	latEven := dLatEven * (math.Mod(j, float64(60)) + cprLatEven)
+	latOdd := dLatOdd * (math.Mod(j, float64(59)) + cprLatOdd)
+
+	if latEven >= 270 {
+		latEven = latEven - 360
+	}
+
+	if latOdd >= 270 {
+		latOdd = latOdd - 360
+	}
+
+	// Compute NL(latE) and NL(latOdd)
+	// if not the same, the two positions are located at different latitude zones.
+	// Exit this calculation and wait for more next messages.
+	nlLatEven := nl(latEven)
+	nlLatOdd := nl(latOdd)
+	if nlLatEven != nlLatOdd {
+		return 0, errors.New("the two positions are not in same latitude zones")
+	}
+
+	var latitude float64
+	if pos.time >= ac.time {
+		latitude = latEven
+	} else {
+		latitude = latOdd
+	}
+
+	return latitude, nil
+}
+
+func calculateLongitude(ac, pos AirbornePosition) (float64, error) {
+	cprLatEven := float64(bin2int(ac.latCPR)) / float64(131072)
+	cprLatOdd := float64(bin2int(pos.latCPR)) / float64(131072)
+
+	// Calculate Latitude Index "j"
+	j := math.Floor((58 * cprLatEven) - (60 * cprLatOdd) + float64(1) / float64(2))
+
+	// Calculate Latitude
+	dLatEven := float64(360) / float64(4 * NZ)
+	dLatOdd := float64(360) / float64(4 * NZ - 1)
+	latEven := dLatEven * (math.Mod(j, float64(60)) + cprLatEven)
+	latOdd := dLatOdd * (math.Mod(j, float64(59)) + cprLatOdd)
+
+	if latEven >= 270 {
+		latEven = latEven - 360
+	}
+
+	if latOdd >= 270 {
+		latOdd = latOdd - 360
+	}
+
+	// Compute NL(latE) and NL(latOdd)
+	// if not the same, the two positions are located at different latitude zones.
+	// Exit this calculation and wait for more next messages.
+	nlLatEven := nl(latEven)
+	nlLatOdd := nl(latOdd)
+	if nlLatEven != nlLatOdd {
+		return 0, errors.New("the two positions are not in same latitude zones")
+	}
+
+	var latitude float64
+	if pos.time >= ac.time {
+		latitude = latEven
+	} else {
+		latitude = latOdd
+	}
+
+	return latitude, nil
 }
 
 func aircraftIdent(data string) AircraftIdent {
@@ -267,33 +369,56 @@ func loadTestData() []string {
 }
 
 type AirbornePosition struct {
-	tc int64  			// Type code
+	df string			// Downlink Format
+	icao string			// ICAO ident
+	tc string  			// Type code
 	ss string 			// Surveillance status
 	nicsb string 		// NIC Supplement-B
-	alt float64 		// Altitude
-	t float64 			// Time
-	cprFlg bool			// CPR odd/even frame flag
-	latCPR float64		// Latitude in CPR Format
-	lonCPR float64		// Longitude in CPR Format
+	alt string 			// Altitude
+	time string 		// Time
+	cprFlg int64		// CPR odd/even frame flag
+	latCPR string		// Latitude in CPR Format
+	lonCPR string		// Longitude in CPR Format
 }
 
 // parseAirbornePosition
-func parseAirbornePosition(data []rune) {
+func parseAirbornePosition(data []rune) AirbornePosition {
+	df := extractBits(data, 1, 5)
+	icao := extractBits(data, 9, 32)
 	tc := extractBits(data, 33, 37)
 	ss := extractBits(data, 38, 39)
 	nicsb := extractBits(data, 40, 40)
 	alt := extractBits(data, 41, 52)
 	time := extractBits(data, 53, 53)
-	cprFlg := extractBits(data, 54, 54)
+	cprFlg := bin2int(extractBits(data, 54, 54))
 	latCPR := extractBits(data, 55, 71)
 	lonCPR := extractBits(data, 72, 88)
 
-	fmt.Println("TC: ", tc)
-	fmt.Println("SS: ", ss)
-	fmt.Println("NICsb: ", nicsb)
-	fmt.Println("Alt: ", alt)
-	fmt.Println("Time: ", time)
-	fmt.Println("CPRFlag: ", cprFlg)
-	fmt.Println("LatCPR: ", latCPR)
-	fmt.Println("LonCPR: ", lonCPR)
+	return AirbornePosition{
+		df: df,
+		icao: icao,
+		tc: tc,
+		ss: ss,
+		nicsb: nicsb,
+		alt: alt,
+		time: time,
+		cprFlg: cprFlg,
+		latCPR: latCPR,
+		lonCPR: lonCPR,
+	}
+}
+
+func nl(lat float64) float64 {
+	if lat == 0 {
+		return 59
+	}
+
+	if lat > 87 || lat < -87 {
+		return 1
+	}
+
+	pi2 := math.Pi * 2
+	cosdiv := (1 - math.Cos(math.Pi/(2*NZ))) / math.Pow(math.Cos((math.Pi/180)*lat), 2)
+	final := math.Floor(pi2 / math.Acos(1-cosdiv))
+	return final
 }
