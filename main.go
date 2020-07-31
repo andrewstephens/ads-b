@@ -61,7 +61,7 @@ func main() {
 					// Globally Unambiguous position
 					latitude, err := calculateLatitude(pos, ac)
 					if err != nil {
-						break DataLoop
+						continue DataLoop
 					}
 					//longitude := calculateLongitude(pos, ac)
 
