@@ -41,12 +41,15 @@ func TestParsing(t *testing.T) {
 			}
 		}
 
+		// Aircraft Altitude
+		alt := aircraftAltitude(msg.binstring)
+
 		// Aircraft Heading
-		// Aircraft Elevation
 
 		fmt.Println(oeFlag)
 		fmt.Println(at)
 		fmt.Println(ai)
+		fmt.Println(alt.alt)
 		fmt.Println("")
 	}
 }

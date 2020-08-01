@@ -36,6 +36,11 @@ type Message struct {
 	pi int64
 }
 
+type Altitude struct {
+	alt int64
+	accuracy int32
+}
+
 type Aircraft struct {
 	aircraftType string
 	ident string
@@ -307,20 +312,23 @@ func parseLatLng(msg0 AircraftPosition, msg1 AircraftPosition, ts0 int64, ts1 in
 		nlResult := nl(latEven)
 		ni := math.Max(nlResult, 1)
 		dLon := float64(360) / ni
-		m := floor(cprLonEven * (nl(latEven) - 1) - cprLonOdd * (nl(latEven) + 0.5))
+		a := cprLonEven * (nlResult - 1) - (cprLonOdd * nlResult) + 0.5
+		m := floor(a)
 		longitude = dLon * (mod(m, ni) + cprLonEven)
 	} else {
 		nlResult := nl(latOdd)
 		ni := math.Max(nlResult, 1)
 		dLon := float64(360) / ni
-		m := floor(cprLonEven * (nl(latOdd) - 1) - cprLonOdd * (nl(latOdd) + 0.5))
+		a := cprLonEven * (nlResult - 1) - (cprLonOdd * nlResult) + 0.5
+		m := floor(a)
 		longitude = dLon * (mod(m, ni) + cprLonOdd)
 	}
-	// TODO: Longitude isn't correct :(
+
 	if longitude > 180 {
 		longitude = longitude - 360
 	}
 
+	// TODO: Implement Float truncation for lat/lon
 	return latitude, longitude
 }
 
@@ -412,6 +420,25 @@ func airplaneLookup(icao string) string {
 		} else {
 			continue
 		}
+	}
+}
+
+func aircraftAltitude(data string) Altitude {
+	ds := []rune(data)
+	qbit := bin2int(extractBits(ds, 48, 48))
+	n := extractBits(ds, 41, 47) + extractBits(ds, 49, 52)
+	var ftMultiple int32
+	if qbit == 0 {
+		ftMultiple = 100
+	} else {
+		ftMultiple = 25
+	}
+
+	alt := bin2int(n) * 25 - 1000
+
+	return Altitude{
+		alt: alt,
+		accuracy: ftMultiple,
 	}
 }
 
